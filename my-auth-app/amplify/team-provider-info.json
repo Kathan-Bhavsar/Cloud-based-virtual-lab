@@ -1,0 +1,20 @@
+{
+  "dev": {
+    "awscloudformation": {
+      "AuthRoleName": "amplify-virtuallab-dev-4721b-authRole",
+      "UnauthRoleArn": "arn:aws:iam::688567278889:role/amplify-virtuallab-dev-4721b-unauthRole",
+      "AuthRoleArn": "arn:aws:iam::688567278889:role/amplify-virtuallab-dev-4721b-authRole",
+      "Region": "ap-south-1",
+      "DeploymentBucketName": "amplify-virtuallab-dev-4721b-deployment",
+      "UnauthRoleName": "amplify-virtuallab-dev-4721b-unauthRole",
+      "StackName": "amplify-virtuallab-dev-4721b",
+      "StackId": "arn:aws:cloudformation:ap-south-1:688567278889:stack/amplify-virtuallab-dev-4721b/e542a540-6d65-11f0-b647-0aa0516d4a39",
+      "AmplifyAppId": "dfzt6tqexwee1"
+    },
+    "categories": {
+      "auth": {
+        "virtuallab0d041bd4": {}
+      }
+    }
+  }
+}
