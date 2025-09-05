@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { User, LogOut, Play, Square, ExternalLink, Clock, Server, Cpu, HardDrive, Activity } from 'lucide-react';
+import { fetchAuthSession } from 'aws-amplify/auth';
+import { User, LogOut, Play, Square, ExternalLink, Clock, Server, Cpu, HardDrive, Activity, Folder } from 'lucide-react';
 import './App.css';
 
 const VirtualLabDashboard = ({ user, signOut }) => {
@@ -8,115 +9,174 @@ const VirtualLabDashboard = ({ user, signOut }) => {
   const [labUrl, setLabUrl] = useState('');
   const [taskArn, setTaskArn] = useState('');
   const [isJupyterReady, setIsJupyterReady] = useState(false);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
 
-  // Your API Gateway endpoint
+  // ✅ Extract user email from Cognito user object
+  useEffect(() => {
+    let email = null;
+    if (user?.attributes?.email) {
+      // Standard Cognito attribute path
+      email = user.attributes.email;
+    } else if (user?.signInDetails?.loginId) {
+      // In your case, Cognito puts it here
+      email = user.signInDetails.loginId;
+    }
+    if (email) {
+      console.log("✅ Logged in user email:", email);
+    } else {
+      console.log("⚠️ No email found in user object:", user);
+    }
+  }, [user]);
+
+  // Your API Gateway endpoints
   const API_BASE_URL = 'https://ijgdznqeh9.execute-api.ap-south-1.amazonaws.com/prod';
   const START_LAB_URL = `${API_BASE_URL}/lab/start`;
   const STOP_LAB_URL = `${API_BASE_URL}/lab/stop`;
+  const FILES_URL = `${API_BASE_URL}/files`;
 
+  // ✅ Always fetch fresh JWT token
+  const getAuthToken = async () => {
+    try {
+      const session = await fetchAuthSession();
+      const token = session.tokens?.idToken?.toString();
+      if (!token) throw new Error("No JWT token found in session");
+      console.log("✅ JWT Token:", token);
+      return token;
+    } catch (err) {
+      console.error("❌ Error fetching token:", err);
+      throw new Error("User not authenticated, please sign in again.");
+    }
+  };
+
+  // 📂 Handle "My Files" button
+  const handleOpenFiles = async () => {
+    setIsLoadingFiles(true);
+    try {
+      const token = await getAuthToken();
+      console.log("Calling files API:", FILES_URL);
+
+      const response = await fetch(FILES_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log("Files response status:", response.status);
+
+      if (!response.ok) {
+        throw new Error(`Server returned status: ${response.status}`);
+      }
+
+      const responseData = await response.json();
+      console.log("Files API response:", responseData);
+
+      const data = responseData.body ? JSON.parse(responseData.body) : responseData;
+
+      if (data.s3ConsoleUrl) {
+        window.open(data.s3ConsoleUrl, '_blank');
+        console.log("Opened S3 console:", data.s3ConsoleUrl);
+      } else {
+        throw new Error('No S3 URL received');
+      }
+
+    } catch (error) {
+      console.error('Error accessing files:', error);
+      alert('Failed to open files. Please try again. Error: ' + error.message);
+    } finally {
+      setIsLoadingFiles(false);
+    }
+  };
+
+  // ▶️ Start Lab
   const startLab = async () => {
     setLabStatus('starting');
     setIsJupyterReady(false);
-    setTimeLeft(30 * 60); // Reset timer but don't start counting yet
+    setTimeLeft(30 * 60);
 
     try {
+      const token = await getAuthToken();
       console.log("Calling API:", START_LAB_URL);
 
       const response = await fetch(START_LAB_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         }
       });
 
       console.log("Response status:", response.status);
 
-      // Check if the HTTP request was successful
-      if (response.status >= 200 && response.status < 300) {
-        const responseData = await response.json();
-        console.log("Full API response:", responseData);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("API error response:", errorText);
+        throw new Error(`Server error: ${response.status} - ${errorText}`);
+      }
 
-        // Parse the body string as JSON
-        const data = JSON.parse(responseData.body);
-        console.log("Parsed data:", data);
+      const responseData = await response.json();
+      console.log("Full API response:", responseData);
 
-        if (data.publicIp && data.jupyterUrl) {
-          // Lab started successfully with IP
-          setLabUrl(data.jupyterUrl);
-          setTaskArn(data.taskArn);
-          setLabStatus('running');
-          console.log("Jupyter URL set to:", data.jupyterUrl);
-          
-          // Wait for Jupyter to be fully ready (ping the URL)
-          checkJupyterReady(data.jupyterUrl);
-        } else if (data.error) {
-          // Error from Lambda
-          throw new Error(data.error);
-        } else {
-          throw new Error('Invalid response format from server');
-        }
+      const data = responseData.body ? JSON.parse(responseData.body) : responseData;
+
+      if (data.publicIp && data.jupyterUrl) {
+        setLabUrl(data.jupyterUrl);
+        setTaskArn(data.taskArn);
+        setLabStatus('running');
+        console.log("Jupyter URL set to:", data.jupyterUrl);
+        checkJupyterReady(data.jupyterUrl);
       } else {
-        throw new Error(`Server returned status: ${response.status}`);
+        throw new Error('Invalid response format from server');
       }
 
     } catch (error) {
       console.error('Error starting lab:', error);
       setLabStatus('ready');
-      alert('Failed to start lab. Please try again. Check console for details.');
+      alert('Failed to start lab: ' + error.message);
     }
   };
 
-  // Function to check if Jupyter is ready
+  // ⏳ Check Jupyter readiness (stable version, capped retries)
   const checkJupyterReady = async (url, retryCount = 0) => {
-    if (retryCount > 36) { // 6 minutes max (36 * 10 seconds)
-      console.log("Jupyter readiness check timeout");
-      setIsJupyterReady(true); // Still show button but warn user
-      startTimer(); // Start the timer even if Jupyter isn't fully ready
+    if (retryCount > 36) { // ~6 minutes max
+      console.log("⚠️ Jupyter readiness check timeout");
+      setIsJupyterReady(true);
+      startTimer();
       return;
     }
 
     try {
       console.log(`Checking Jupyter readiness (attempt ${retryCount + 1})...`);
-      
-      // Try to fetch the Jupyter URL with timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
-      const response = await fetch(url, { 
-        method: 'GET',
-        mode: 'no-cors', // Avoid CORS issues
-        signal: controller.signal
-      });
-      
+
+      await fetch(url, { method: 'GET', mode: 'no-cors', signal: controller.signal });
+
       clearTimeout(timeoutId);
-      
-      // If we get here, Jupyter is ready!
-      console.log("Jupyter is ready!");
+
+      console.log("✅ Jupyter is ready!");
       setIsJupyterReady(true);
-      startTimer(); // Start the 30-minute timer only when Jupyter is ready
-      
-    } catch (error) {
-      // Jupyter not ready yet, try again in 10 seconds
-      console.log("Jupyter not ready yet, waiting...");
+      startTimer();
+    } catch {
+      console.log("⏳ Jupyter not ready yet, waiting...");
       setTimeout(() => checkJupyterReady(url, retryCount + 1), 10000);
     }
   };
 
-  // Start the 30-minute timer
+  // ⏱️ Start timer
   const startTimer = () => {
-    setTimeLeft(30 * 60); // Reset to 30 minutes
-    console.log("30-minute timer started");
+    setTimeLeft(30 * 60);
+    console.log("⏱️ 30-minute timer started");
   };
 
+  // ⏹️ Stop Lab
   const stopLab = async () => {
     try {
-      if (!taskArn) {
-        throw new Error('No task ARN available to stop');
-      }
-
+      if (!taskArn) throw new Error('No task ARN available to stop');
+      const token = await getAuthToken();
       console.log("Stopping task:", taskArn);
 
-      // Create the request body properly
       const requestBody = JSON.stringify({ taskArn });
       console.log("Request body:", requestBody);
 
@@ -124,6 +184,7 @@ const VirtualLabDashboard = ({ user, signOut }) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: requestBody
       });
@@ -133,20 +194,6 @@ const VirtualLabDashboard = ({ user, signOut }) => {
       if (response.ok) {
         const responseData = await response.json();
         console.log("Stop response:", responseData);
-        
-        // Parse the nested body if it exists
-        let result;
-        if (responseData.body) {
-          try {
-            result = JSON.parse(responseData.body);
-          } catch (e) {
-            result = responseData;
-          }
-        } else {
-          result = responseData;
-        }
-        
-        console.log('Lab stopped successfully:', result);
         alert('Lab stopped successfully!');
       } else {
         const errorText = await response.text();
@@ -165,6 +212,7 @@ const VirtualLabDashboard = ({ user, signOut }) => {
     }
   };
 
+  // Countdown timer effect
   useEffect(() => {
     let timer;
     if (labStatus === 'running' && isJupyterReady && timeLeft > 0) {
@@ -175,6 +223,7 @@ const VirtualLabDashboard = ({ user, signOut }) => {
     return () => clearTimeout(timer);
   }, [labStatus, isJupyterReady, timeLeft]);
 
+  // Format timer
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -275,10 +324,33 @@ const VirtualLabDashboard = ({ user, signOut }) => {
                   <span>Jupyter Starting...</span>
                 </button>
               )}
+
+              {/* My Files Button */}
+              <button
+                onClick={handleOpenFiles}
+                disabled={isLoadingFiles}
+                className="files-btn"
+              >
+                {isLoadingFiles ? (
+                  <><div className="spinner-small" /><span>Opening Files...</span></>
+                ) : (
+                  <><Folder size={16} /><span>My Files</span></>
+                )}
+              </button>
+
               <button onClick={stopLab} className="stop-btn">
                 <Square size={16} />
                 <span>Stop Lab Session</span>
               </button>
+            </div>
+          )}
+
+          {/* File Management Info */}
+          {labStatus === 'running' && (
+            <div className="file-info-box">
+              <div style={{ fontSize: '14px', color: '#666', textAlign: 'center', marginTop: '15px' }}>
+                💡 Your files are automatically backed up to Amazon S3 every 2 minutes
+              </div>
             </div>
           )}
 

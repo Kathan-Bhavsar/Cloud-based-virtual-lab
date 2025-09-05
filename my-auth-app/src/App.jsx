@@ -13,26 +13,6 @@ function App() {
     <div className="app-container">
       <Authenticator
         components={{
-          SignIn: {
-            Header: () => (
-              <div className="auth-header">
-                <div className="logo-container">
-                  <div className="logo-icon">🧪</div>
-                  <h1>Virtual Lab</h1>
-                </div>
-              </div>
-            ),
-          },
-          SignUp: {
-            Header: () => (
-              <div className="auth-header">
-                <div className="logo-container">
-                  <div className="logo-icon">🧪</div>
-                  <h1>Virtual Lab</h1>
-                </div>
-              </div>
-            ),
-          },
           ConfirmSignUp: {
             Header: () => (
               <div className="auth-header">

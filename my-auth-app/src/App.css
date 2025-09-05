@@ -309,3 +309,61 @@ body {
     opacity: 0.5;
   }
 }
+
+/* Add these styles to your existing App.css */
+.files-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.files-btn:hover:not(:disabled) {
+  background: #5a6268;
+}
+
+.files-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.spinner-small {
+  width: 16px;
+  height: 16px;
+  border: 2px solid transparent;
+  border-top: 2px solid white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.file-info-box {
+  background: #f8f9fa;
+  padding: 12px;
+  border-radius: 8px;
+  margin: 15px 0;
+  border: 1px solid #e9ecef;
+}
+
+/* Ensure lab-actions has proper spacing */
+.lab-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 20px 0;
+}
+
+/* Keyframes for spinner animation */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
