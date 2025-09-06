@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fetchAuthSession } from 'aws-amplify/auth';
+import FileBrowser from './FileBrowser.jsx';
 import { User, LogOut, Play, Square, ExternalLink, Clock, Server, Cpu, HardDrive, Activity, Folder } from 'lucide-react';
 import './App.css';
 
@@ -11,10 +12,16 @@ const VirtualLabDashboard = ({ user, signOut }) => {
   const [isJupyterReady, setIsJupyterReady] = useState(false);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
 
+  // NEW STATES FOR FILE BROWSER
+  const [userFiles, setUserFiles] = useState([]);
+  const [userFolders, setUserFolders] = useState([]);
+  const [showFileBrowser, setShowFileBrowser] = useState(false);
+  const [fileBrowserError, setFileBrowserError] = useState('');
+
   // ✅ Extract user email from Cognito user object
   useEffect(() => {
     console.log("🔍 User object received:", user);
-    
+
     let email = null;
     if (user?.attributes?.email) {
       email = user.attributes.email;
@@ -26,7 +33,7 @@ const VirtualLabDashboard = ({ user, signOut }) => {
       email = user.username;
       console.log("✅ Using username as email:", email);
     }
-    
+
     if (email) {
       console.log("🎯 Logged in user email:", email);
     } else {
@@ -46,17 +53,17 @@ const VirtualLabDashboard = ({ user, signOut }) => {
       console.log("🔄 Fetching fresh JWT token...");
       const session = await fetchAuthSession();
       console.log("✅ Auth session:", session);
-      
+
       const token = session.tokens?.idToken?.toString();
       console.log("🔐 JWT Token available:", !!token);
-      
+
       if (!token) {
         throw new Error("No JWT token found in session");
       }
-      
+
       console.log("✅ JWT Token length:", token.length);
       console.log("✅ JWT Token preview:", token.substring(0, 50) + "...");
-      
+
       // ✅ DEBUG: Decode JWT token to see claims
       try {
         const payload = token.split('.')[1];
@@ -67,9 +74,9 @@ const VirtualLabDashboard = ({ user, signOut }) => {
       } catch (decodeError) {
         console.log("⚠️ Could not decode JWT token:", decodeError);
       }
-      
+
       return token;
-      
+
     } catch (err) {
       console.error("❌ Error fetching token:", err);
       throw new Error("User not authenticated, please sign in again.");
@@ -80,13 +87,14 @@ const VirtualLabDashboard = ({ user, signOut }) => {
   const handleOpenFiles = async () => {
     console.log("📁 My Files button clicked");
     setIsLoadingFiles(true);
-    
+    setFileBrowserError('');
+
     try {
       const token = await getAuthToken();
-      console.log("🌐 Calling files API:", FILES_URL);
+      console.log("🌐 Calling files API (GET):", FILES_URL);
 
       const response = await fetch(FILES_URL, {
-        method: 'POST',
+        method: 'GET', // ← CHANGED TO GET
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -94,7 +102,6 @@ const VirtualLabDashboard = ({ user, signOut }) => {
       });
 
       console.log("📋 Files response status:", response.status);
-      console.log("📋 Files response headers:", Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -105,19 +112,23 @@ const VirtualLabDashboard = ({ user, signOut }) => {
       const responseData = await response.json();
       console.log("✅ Files API response:", responseData);
 
+      // Parse the response
       const data = responseData.body ? JSON.parse(responseData.body) : responseData;
       console.log("✅ Parsed files data:", data);
 
-      if (data.s3ConsoleUrl) {
-        console.log("🔗 Opening S3 console:", data.s3ConsoleUrl);
-        window.open(data.s3ConsoleUrl, '_blank');
+      if (data.success) {
+        // Set files and folders for the file browser
+        setUserFiles(data.files || []);
+        setUserFolders(data.folders || []);
+        setShowFileBrowser(true);
+        console.log(`📊 Loaded ${data.files.length} files and ${data.folders.length} folders`);
       } else {
-        throw new Error('No S3 URL received');
+        throw new Error(data.error || 'Failed to load files');
       }
 
     } catch (error) {
       console.error('❌ Error accessing files:', error);
-      alert('Failed to open files. Please try again. Error: ' + error.message);
+      setFileBrowserError('Failed to load files: ' + error.message);
     } finally {
       setIsLoadingFiles(false);
     }
@@ -171,7 +182,7 @@ const VirtualLabDashboard = ({ user, signOut }) => {
         console.log("🌍 Jupyter URL:", data.jupyterUrl);
         console.log("📝 Task ARN:", data.taskArn);
         console.log("👤 User Email:", data.userEmail);
-        
+
         checkJupyterReady(data.jupyterUrl);
       } else {
         throw new Error('Invalid response format from server');
@@ -182,12 +193,12 @@ const VirtualLabDashboard = ({ user, signOut }) => {
       setLabStatus('ready');
       alert('Failed to start lab: ' + error.message);
     }
-};
+  };
 
   // ⏳ Check Jupyter readiness
   const checkJupyterReady = async (url, retryCount = 0) => {
     console.log(`🔍 Checking Jupyter readiness (attempt ${retryCount + 1}/36)...`);
-    
+
     if (retryCount > 36) {
       console.log("⏰ Jupyter readiness check timeout after 6 minutes");
       setIsJupyterReady(true);
@@ -202,7 +213,7 @@ const VirtualLabDashboard = ({ user, signOut }) => {
         controller.abort();
       }, 5000);
 
-      const response = await fetch(url, { 
+      const response = await fetch(url, {
         method: 'GET',
         mode: 'no-cors',
         signal: controller.signal
@@ -212,7 +223,7 @@ const VirtualLabDashboard = ({ user, signOut }) => {
       console.log("✅ Jupyter is ready! Response status:", response.status);
       setIsJupyterReady(true);
       startTimer();
-      
+
     } catch (error) {
       console.log("⏳ Jupyter not ready yet, waiting 10 seconds... Error:", error.message);
       setTimeout(() => checkJupyterReady(url, retryCount + 1), 10000);
@@ -228,12 +239,12 @@ const VirtualLabDashboard = ({ user, signOut }) => {
   // ⏹️ Stop Lab
   const stopLab = async () => {
     console.log("⏹️ Stop Lab button clicked");
-    
+
     try {
       if (!taskArn) {
         throw new Error('No task ARN available to stop');
       }
-      
+
       const token = await getAuthToken();
       console.log("🌐 Calling stop lab API:", STOP_LAB_URL);
       console.log("📝 Task ARN to stop:", taskArn);
@@ -270,6 +281,42 @@ const VirtualLabDashboard = ({ user, signOut }) => {
       setLabUrl('');
       setTaskArn('');
       setIsJupyterReady(false);
+    }
+  };
+
+  // Add this function to handle file deletion
+  const handleDeleteFile = async (filePath) => {
+    try {
+      const token = await getAuthToken();
+      console.log("🗑️ Deleting file:", filePath);
+
+      const response = await fetch(FILES_URL, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          filePath: filePath
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server returned status: ${response.status}: ${errorText}`);
+      }
+
+      const responseData = await response.json();
+      console.log("✅ Delete response:", responseData);
+
+      // Remove the file from local state
+      setUserFiles(prevFiles => prevFiles.filter(file => file.fullPath !== filePath));
+
+      return responseData;
+
+    } catch (error) {
+      console.error('❌ Error deleting file:', error);
+      throw error;
     }
   };
 
@@ -310,7 +357,7 @@ const VirtualLabDashboard = ({ user, signOut }) => {
         <div className="dashboard-header">
           <div className="dashboard-user">
             <div className="user-avatar"><User size={18} /></div>
-            <span>{user?.username || 'User Lab'}</span>
+            <span>{user?.signInDetails?.loginId || user?.attributes?.email || user?.username || 'User Lab'}</span>
           </div>
           <button onClick={signOut} className="signout-btn">
             <LogOut size={16} />
@@ -367,7 +414,21 @@ const VirtualLabDashboard = ({ user, signOut }) => {
             </div>
           </div>
 
-          {/* Buttons */}
+          {/* My Files Button - ALWAYS VISIBLE */}
+          <button
+            onClick={handleOpenFiles}
+            disabled={isLoadingFiles}
+            className="files-btn"
+            style={{ marginBottom: '20px' }}
+          >
+            {isLoadingFiles ? (
+              <><div className="spinner-small" /><span>Loading Files...</span></>
+            ) : (
+              <><Folder size={16} /><span>My Files</span></>
+            )}
+          </button>
+
+          {/* Lab Control Buttons */}
           {labStatus === 'ready' || labStatus === 'stopped' ? (
             <button onClick={startLab} disabled={labStatus === 'starting'} className="launch-btn">
               {labStatus === 'starting' ? <><div className="spinner" /><span>Launching Lab...</span></> : <><Play size={20} /><span>Launch Jupyter Lab</span></>}
@@ -387,19 +448,6 @@ const VirtualLabDashboard = ({ user, signOut }) => {
                 </button>
               )}
 
-              {/* My Files Button */}
-              <button
-                onClick={handleOpenFiles}
-                disabled={isLoadingFiles}
-                className="files-btn"
-              >
-                {isLoadingFiles ? (
-                  <><div className="spinner-small" /><span>Opening Files...</span></>
-                ) : (
-                  <><Folder size={16} /><span>My Files</span></>
-                )}
-              </button>
-
               <button onClick={stopLab} className="stop-btn">
                 <Square size={16} />
                 <span>Stop Lab Session</span>
@@ -416,12 +464,29 @@ const VirtualLabDashboard = ({ user, signOut }) => {
             </div>
           )}
 
+          {/* Error Message */}
+          {fileBrowserError && (
+            <div className="error-message">
+              ⚠️ {fileBrowserError}
+            </div>
+          )}
+
           <div className="footer-box">
             <div>🐍 Python 3.11 • 📊 Pandas • 🤖 Scikit-learn • 📈 Matplotlib</div>
             <div>Pre-configured with popular data science and ML libraries</div>
           </div>
         </div>
       </div>
+
+      {/* File Browser Modal */}
+      {showFileBrowser && (
+        <FileBrowser
+          files={userFiles}
+          folders={userFolders}
+          onClose={() => setShowFileBrowser(false)}
+          onFileDelete={handleDeleteFile}
+        />
+      )}
     </div>
   );
 };
