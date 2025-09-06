@@ -13,18 +13,24 @@ const VirtualLabDashboard = ({ user, signOut }) => {
 
   // ✅ Extract user email from Cognito user object
   useEffect(() => {
+    console.log("🔍 User object received:", user);
+    
     let email = null;
     if (user?.attributes?.email) {
-      // Standard Cognito attribute path
       email = user.attributes.email;
+      console.log("✅ Email found in user.attributes.email:", email);
     } else if (user?.signInDetails?.loginId) {
-      // In your case, Cognito puts it here
       email = user.signInDetails.loginId;
+      console.log("✅ Email found in user.signInDetails.loginId:", email);
+    } else if (user?.username) {
+      email = user.username;
+      console.log("✅ Using username as email:", email);
     }
+    
     if (email) {
-      console.log("✅ Logged in user email:", email);
+      console.log("🎯 Logged in user email:", email);
     } else {
-      console.log("⚠️ No email found in user object:", user);
+      console.log("⚠️ No email found in user object. Available keys:", Object.keys(user || {}));
     }
   }, [user]);
 
@@ -37,11 +43,33 @@ const VirtualLabDashboard = ({ user, signOut }) => {
   // ✅ Always fetch fresh JWT token
   const getAuthToken = async () => {
     try {
+      console.log("🔄 Fetching fresh JWT token...");
       const session = await fetchAuthSession();
+      console.log("✅ Auth session:", session);
+      
       const token = session.tokens?.idToken?.toString();
-      if (!token) throw new Error("No JWT token found in session");
-      console.log("✅ JWT Token:", token);
+      console.log("🔐 JWT Token available:", !!token);
+      
+      if (!token) {
+        throw new Error("No JWT token found in session");
+      }
+      
+      console.log("✅ JWT Token length:", token.length);
+      console.log("✅ JWT Token preview:", token.substring(0, 50) + "...");
+      
+      // ✅ DEBUG: Decode JWT token to see claims
+      try {
+        const payload = token.split('.')[1];
+        const decodedPayload = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+        const claims = JSON.parse(decodedPayload);
+        console.log("🔍 JWT Token Claims:", claims);
+        console.log("🔍 Email in JWT:", claims.email || claims["cognito:username"] || 'NOT FOUND');
+      } catch (decodeError) {
+        console.log("⚠️ Could not decode JWT token:", decodeError);
+      }
+      
       return token;
+      
     } catch (err) {
       console.error("❌ Error fetching token:", err);
       throw new Error("User not authenticated, please sign in again.");
@@ -50,10 +78,12 @@ const VirtualLabDashboard = ({ user, signOut }) => {
 
   // 📂 Handle "My Files" button
   const handleOpenFiles = async () => {
+    console.log("📁 My Files button clicked");
     setIsLoadingFiles(true);
+    
     try {
       const token = await getAuthToken();
-      console.log("Calling files API:", FILES_URL);
+      console.log("🌐 Calling files API:", FILES_URL);
 
       const response = await fetch(FILES_URL, {
         method: 'POST',
@@ -63,26 +93,30 @@ const VirtualLabDashboard = ({ user, signOut }) => {
         }
       });
 
-      console.log("Files response status:", response.status);
+      console.log("📋 Files response status:", response.status);
+      console.log("📋 Files response headers:", Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error("❌ Files API error:", errorText);
         throw new Error(`Server returned status: ${response.status}`);
       }
 
       const responseData = await response.json();
-      console.log("Files API response:", responseData);
+      console.log("✅ Files API response:", responseData);
 
       const data = responseData.body ? JSON.parse(responseData.body) : responseData;
+      console.log("✅ Parsed files data:", data);
 
       if (data.s3ConsoleUrl) {
+        console.log("🔗 Opening S3 console:", data.s3ConsoleUrl);
         window.open(data.s3ConsoleUrl, '_blank');
-        console.log("Opened S3 console:", data.s3ConsoleUrl);
       } else {
         throw new Error('No S3 URL received');
       }
 
     } catch (error) {
-      console.error('Error accessing files:', error);
+      console.error('❌ Error accessing files:', error);
       alert('Failed to open files. Please try again. Error: ' + error.message);
     } finally {
       setIsLoadingFiles(false);
@@ -96,8 +130,8 @@ const VirtualLabDashboard = ({ user, signOut }) => {
     setTimeLeft(30 * 60);
 
     try {
+      console.log("🚀 Calling start lab API...");
       const token = await getAuthToken();
-      console.log("Calling API:", START_LAB_URL);
 
       const response = await fetch(START_LAB_URL, {
         method: 'POST',
@@ -107,59 +141,80 @@ const VirtualLabDashboard = ({ user, signOut }) => {
         }
       });
 
-      console.log("Response status:", response.status);
+      console.log("📋 Start lab response status:", response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("API error response:", errorText);
+        console.error("❌ Start lab API error:", errorText);
         throw new Error(`Server error: ${response.status} - ${errorText}`);
       }
 
       const responseData = await response.json();
-      console.log("Full API response:", responseData);
+      console.log("✅ Start lab API response:", responseData);
 
+      // Parse the response
       const data = responseData.body ? JSON.parse(responseData.body) : responseData;
+      console.log("📊 Parsed response data:", data);
+
+      // ✅ NEW: Show debug info from Lambda
+      if (data.debug) {
+        console.log("🐛 LAMBDA DEBUG INFO:", data.debug);
+        console.log("🔍 JWT Email extracted:", data.debug.jwtEmailExtracted);
+        console.log("⚠️ Used fallback:", data.debug.usedFallback);
+        console.log("📋 Claims found:", data.debug.claimsFound);
+      }
 
       if (data.publicIp && data.jupyterUrl) {
         setLabUrl(data.jupyterUrl);
         setTaskArn(data.taskArn);
         setLabStatus('running');
-        console.log("Jupyter URL set to:", data.jupyterUrl);
+        console.log("🌍 Jupyter URL:", data.jupyterUrl);
+        console.log("📝 Task ARN:", data.taskArn);
+        console.log("👤 User Email:", data.userEmail);
+        
         checkJupyterReady(data.jupyterUrl);
       } else {
         throw new Error('Invalid response format from server');
       }
 
     } catch (error) {
-      console.error('Error starting lab:', error);
+      console.error('❌ Error starting lab:', error);
       setLabStatus('ready');
       alert('Failed to start lab: ' + error.message);
     }
-  };
+};
 
-  // ⏳ Check Jupyter readiness (stable version, capped retries)
+  // ⏳ Check Jupyter readiness
   const checkJupyterReady = async (url, retryCount = 0) => {
-    if (retryCount > 36) { // ~6 minutes max
-      console.log("⚠️ Jupyter readiness check timeout");
+    console.log(`🔍 Checking Jupyter readiness (attempt ${retryCount + 1}/36)...`);
+    
+    if (retryCount > 36) {
+      console.log("⏰ Jupyter readiness check timeout after 6 minutes");
       setIsJupyterReady(true);
       startTimer();
       return;
     }
 
     try {
-      console.log(`Checking Jupyter readiness (attempt ${retryCount + 1})...`);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => {
+        console.log("⏰ Jupyter check timeout");
+        controller.abort();
+      }, 5000);
 
-      await fetch(url, { method: 'GET', mode: 'no-cors', signal: controller.signal });
+      const response = await fetch(url, { 
+        method: 'GET',
+        mode: 'no-cors',
+        signal: controller.signal
+      });
 
       clearTimeout(timeoutId);
-
-      console.log("✅ Jupyter is ready!");
+      console.log("✅ Jupyter is ready! Response status:", response.status);
       setIsJupyterReady(true);
       startTimer();
-    } catch {
-      console.log("⏳ Jupyter not ready yet, waiting...");
+      
+    } catch (error) {
+      console.log("⏳ Jupyter not ready yet, waiting 10 seconds... Error:", error.message);
       setTimeout(() => checkJupyterReady(url, retryCount + 1), 10000);
     }
   };
@@ -172,13 +227,19 @@ const VirtualLabDashboard = ({ user, signOut }) => {
 
   // ⏹️ Stop Lab
   const stopLab = async () => {
+    console.log("⏹️ Stop Lab button clicked");
+    
     try {
-      if (!taskArn) throw new Error('No task ARN available to stop');
+      if (!taskArn) {
+        throw new Error('No task ARN available to stop');
+      }
+      
       const token = await getAuthToken();
-      console.log("Stopping task:", taskArn);
+      console.log("🌐 Calling stop lab API:", STOP_LAB_URL);
+      console.log("📝 Task ARN to stop:", taskArn);
 
       const requestBody = JSON.stringify({ taskArn });
-      console.log("Request body:", requestBody);
+      console.log("📦 Request body:", requestBody);
 
       const response = await fetch(STOP_LAB_URL, {
         method: 'POST',
@@ -189,20 +250,20 @@ const VirtualLabDashboard = ({ user, signOut }) => {
         body: requestBody
       });
 
-      console.log("Stop response status:", response.status);
+      console.log("📋 Stop response status:", response.status);
 
       if (response.ok) {
         const responseData = await response.json();
-        console.log("Stop response:", responseData);
+        console.log("✅ Stop response:", responseData);
         alert('Lab stopped successfully!');
       } else {
         const errorText = await response.text();
-        console.error("Stop error:", errorText);
+        console.error("❌ Stop error:", errorText);
         throw new Error(`Failed to stop lab: ${response.status}`);
       }
 
     } catch (error) {
-      console.error('Error stopping lab:', error);
+      console.error('❌ Error stopping lab:', error);
       alert('Failed to stop lab. Please try again. Check console for details.');
     } finally {
       setLabStatus('stopped');
@@ -218,6 +279,7 @@ const VirtualLabDashboard = ({ user, signOut }) => {
     if (labStatus === 'running' && isJupyterReady && timeLeft > 0) {
       timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
     } else if (timeLeft === 0) {
+      console.log("⏰ Time's up! Stopping lab automatically");
       stopLab();
     }
     return () => clearTimeout(timer);
